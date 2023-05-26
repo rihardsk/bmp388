@@ -135,27 +135,19 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
         partial_data3 = partial_data1 * partial_data2;
         let partial_data4 = partial_data3 + (uncompensated * uncompensated * uncompensated) * p11;
 
-        let compensated_press = partial_out1 + partial_out2 + partial_data4;
-
-        compensated_press
-        
+        partial_out1 + partial_out2 + partial_data4
     }
 
     /// Compensates a temperature value
     fn compensate_temp(&mut self, uncompensated : u32) -> f64 {
-        let partial_data1 : f64;
-        let partial_data2 : f64;
-
         let t1 = (self.dig_t1 as f64) / 0.00390625; //2^-8
         let t2 = (self.dig_t2 as f64) / 1_073_741_824.0; //2^30
         let t3 = (self.dig_t3 as f64) / 281_474_976_710_656.0; //2^48
 
-        partial_data1 = (uncompensated as f64) - t1;
-        partial_data2 = partial_data1 * t2;
+        let partial_data1 = (uncompensated as f64) - t1;
+        let partial_data2 = partial_data1 * t2;
 
-        let compensated = partial_data2 + (partial_data1 * partial_data1) * t3; 
-
-        return compensated;
+        partial_data2 + (partial_data1 * partial_data1) * t3
     }
 
     /// Sets power settings
@@ -179,7 +171,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
         Ok(PowerControl{
             pressure_enable: press_en,
             temperature_enable: temp_en,
-            mode: mode
+            mode
         })
     }
 
@@ -267,8 +259,8 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             _ => Oversampling::x32,
         };
         Ok(OversamplingConfig {
-            osr_p: osr_p,
-            osr4_t: osr4_t,
+            osr_p,
+            osr4_t,
         })
     }
 
@@ -295,7 +287,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
         Ok(InterruptConfig {
             output: mode,
             active_high: level,
-            latch: latch,
+            latch,
             data_ready_interrupt_enable: data_ready,
         })
     }
@@ -309,7 +301,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             temperature_data_ready: status & (1 << 6) != 0,
         })
     }
-    
+
     ///Get the error register
     pub fn error(&mut self) -> Result<Error, I2C::Error> {
         let error = self.read_byte(Register::err)?;
