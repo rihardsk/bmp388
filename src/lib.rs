@@ -29,7 +29,10 @@ struct CalibrationData {
 }
 
 impl CalibrationData {
-    fn read_calibration<I2C: ehal::blocking::i2c::WriteRead>(i2c: &mut I2C, address: u8) -> Result<Self, I2C::Error> {
+    fn read_calibration<I2C: ehal::blocking::i2c::WriteRead>(
+        i2c: &mut I2C,
+        address: u8,
+    ) -> Result<Self, I2C::Error> {
         let mut data: [u8; 21] = [0; 21];
         i2c.write_read(address, &[Register::calib00 as u8], &mut data)?;
 
@@ -63,7 +66,11 @@ pub struct BMP388<I2C: ehal::blocking::i2c::WriteRead> {
 
 impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     /// Creates new BMP388 driver
-    pub fn new<E>(i2c: I2C, addr: u8, delay: &mut impl ehal::blocking::delay::DelayMs<u8>) -> Result<BMP388<I2C>, E>
+    pub fn new<E>(
+        i2c: I2C,
+        addr: u8,
+        delay: &mut impl ehal::blocking::delay::DelayMs<u8>,
+    ) -> Result<BMP388<I2C>, E>
     where
         I2C: ehal::blocking::i2c::WriteRead<Error = E>,
     {
@@ -88,11 +95,11 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
 }
 
 impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
-
     /// Reads and returns sensor values
     pub fn sensor_values(&mut self) -> Result<SensorData, I2C::Error> {
         let mut data: [u8; 6] = [0, 0, 0, 0, 0, 0];
-        self.com.write_read(self.addr, &[Register::sensor_data as u8], &mut data)?;
+        self.com
+            .write_read(self.addr, &[Register::sensor_data as u8], &mut data)?;
         let uncompensated_press = (data[0] as u32) | (data[1] as u32) << 8 | (data[2] as u32) << 16;
         let uncompensated_temp = (data[3] as u32) | (data[4] as u32) << 8 | (data[5] as u32) << 16;
 
@@ -103,7 +110,6 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             pressure: press,
             temperature: temp,
         })
-
     }
 
     /// Compensates a pressure value
@@ -141,7 +147,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     }
 
     /// Compensates a temperature value
-    fn compensate_temp(&mut self, uncompensated : u32) -> f64 {
+    fn compensate_temp(&mut self, uncompensated: u32) -> f64 {
         let c = self.calibration;
         let t1 = (c.dig_t1 as f64) / 0.00390625; //2^-8
         let t2 = (c.dig_t2 as f64) / 1_073_741_824.0; //2^30
@@ -171,13 +177,12 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             x if x == PowerMode::Normal as u8 => PowerMode::Normal,
             _ => PowerMode::Forced,
         };
-        Ok(PowerControl{
+        Ok(PowerControl {
             pressure_enable: press_en,
             temperature_enable: temp_en,
-            mode
+            mode,
         })
     }
-
 
     ///Sets sampling rate
     pub fn set_sampling_rate(&mut self, new: SamplingRate) -> Result<(), I2C::Error> {
@@ -209,7 +214,6 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             _ => SamplingRate::ms65_536,
         };
         Ok(value)
-
     }
 
     /// Returns current filter
@@ -261,10 +265,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
             x if x == Oversampling::x16 as u8 => Oversampling::x16,
             _ => Oversampling::x32,
         };
-        Ok(OversamplingConfig {
-            osr_p,
-            osr4_t,
-        })
+        Ok(OversamplingConfig { osr_p, osr4_t })
     }
 
     /// Sets interrupt configuration
@@ -298,7 +299,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     ///Get the status register
     pub fn status(&mut self) -> Result<Status, I2C::Error> {
         let status = self.read_byte(Register::status)?;
-        Ok(Status{
+        Ok(Status {
             command_ready: status & (1 << 4) != 0,
             pressure_data_ready: status & (1 << 5) != 0,
             temperature_data_ready: status & (1 << 6) != 0,
@@ -308,7 +309,7 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     ///Get the error register
     pub fn error(&mut self) -> Result<Error, I2C::Error> {
         let error = self.read_byte(Register::err)?;
-        Ok(Error{
+        Ok(Error {
             fatal: error & (1 << 0) != 0,
             cmd: error & (1 << 1) != 0,
             config: error & (1 << 2) != 0,
@@ -321,14 +322,13 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     }
 
     /// Software reset, emulates POR
-    pub fn reset(&mut self) -> Result<(), I2C::Error>{
+    pub fn reset(&mut self) -> Result<(), I2C::Error> {
         self.write_byte(Register::cmd, 0xB6) // Magic from documentation
     }
 
-    fn write_byte(&mut self, reg: Register, byte: u8) -> Result<(), I2C::Error>{
+    fn write_byte(&mut self, reg: Register, byte: u8) -> Result<(), I2C::Error> {
         let mut buffer = [0];
-        self
-            .com
+        self.com
             .write_read(self.addr, &[reg as u8, byte], &mut buffer)
     }
 
@@ -371,7 +371,6 @@ pub struct InterruptConfig {
     pub latch: bool,
     ///Data ready interrupt
     pub data_ready_interrupt_enable: bool,
-
 }
 
 ///Output mode for interrupt pin
@@ -386,18 +385,18 @@ pub enum OutputMode {
 ///Sensor data
 pub struct SensorData {
     ///The measured pressure
-    pub pressure : f64,
+    pub pressure: f64,
     /// The emasured temperature
-    pub temperature : f64,
+    pub temperature: f64,
 }
 
 #[derive(Debug, Copy, Clone)]
 /// Powercontrol
 pub struct PowerControl {
     ///Pressuresensor enable
-    pub pressure_enable : bool,
+    pub pressure_enable: bool,
     ///Temperatursensor enable
-    pub temperature_enable : bool,
+    pub temperature_enable: bool,
     /// Powermode
     pub mode: PowerMode,
 }
