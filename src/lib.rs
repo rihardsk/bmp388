@@ -8,10 +8,8 @@
 
 extern crate embedded_hal as ehal;
 
-/// BMP388 driver
-pub struct BMP388<I2C: ehal::blocking::i2c::WriteRead> {
-    com: I2C,
-    addr: u8,
+#[derive(Default, Clone, Copy)]
+struct CalibrationData {
     // Temperature compensation
     dig_t1: u16,
     dig_t2: u16,
@@ -30,6 +28,39 @@ pub struct BMP388<I2C: ehal::blocking::i2c::WriteRead> {
     dig_p11: i8,
 }
 
+impl CalibrationData {
+    fn read_calibration<I2C: ehal::blocking::i2c::WriteRead>(i2c: &mut I2C, address: u8) -> Result<Self, I2C::Error> {
+        let mut data: [u8; 21] = [0; 21];
+        i2c.write_read(address, &[Register::calib00 as u8], &mut data)?;
+
+        let calibration = CalibrationData {
+            dig_t1: (data[0] as u16) | ((data[1] as u16) << 8),
+            dig_t2: (data[2] as u16) | ((data[3] as u16) << 8),
+            dig_t3: data[4] as i8,
+            dig_p1: (data[5] as i16) | ((data[6] as i16) << 8),
+            dig_p2: (data[7] as i16) | ((data[8] as i16) << 8),
+            dig_p3: data[9] as i8,
+            dig_p4: data[10] as i8,
+            dig_p5: (data[11] as u16) | ((data[12] as u16) << 8),
+            dig_p6: (data[13] as u16) | ((data[14] as u16) << 8),
+            dig_p7: data[15] as i8,
+            dig_p8: data[16] as i8,
+            dig_p9: (data[17] as i16) | ((data[18] as i16) << 8),
+            dig_p10: data[19] as i8,
+            dig_p11: data[20] as i8,
+        };
+
+        Ok(calibration)
+    }
+}
+
+/// BMP388 driver
+pub struct BMP388<I2C: ehal::blocking::i2c::WriteRead> {
+    com: I2C,
+    addr: u8,
+    calibration: CalibrationData,
+}
+
 impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     /// Creates new BMP388 driver
     pub fn new<E>(i2c: I2C, addr: u8, delay: &mut impl ehal::blocking::delay::DelayMs<u8>) -> Result<BMP388<I2C>, E>
@@ -39,26 +70,17 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
         let mut chip = BMP388 {
             com: i2c,
             addr,
-            dig_t1: 0,
-            dig_t2: 0,
-            dig_t3: 0,
-            dig_p1: 0,
-            dig_p2: 0,
-            dig_p3: 0,
-            dig_p4: 0,
-            dig_p5: 0,
-            dig_p6: 0,
-            dig_p7: 0,
-            dig_p8: 0,
-            dig_p9: 0,
-            dig_p10: 0,
-            dig_p11: 0,
+            calibration: CalibrationData::default(),
         };
 
+        // TODO: what if the id doesn't match, can we really just not do
+        // calibration then?
+        //
+        // 0x50 is the expected id for bmp388 as written in the documentation
         if chip.id()? == 0x50 {
             chip.reset()?;
             delay.delay_ms(10); // without this the first few bytes of calib data could be incorrectly zero
-            chip.read_calibration()?;
+            chip.calibration = CalibrationData::read_calibration(&mut chip.com, addr)?;
         }
 
         Ok(chip)
@@ -66,27 +88,6 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
 }
 
 impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
-    fn read_calibration(&mut self) -> Result<(), I2C::Error> {
-        let mut data: [u8; 21] = [0; 21];
-        self.com.write_read(self.addr, &[Register::calib00 as u8], &mut data)?;
-
-        self.dig_t1 = (data[0] as u16) | ((data[1] as u16) << 8);
-        self.dig_t2 = (data[2] as u16) | ((data[3] as u16) << 8);
-        self.dig_t3 = data[4] as i8;
-
-        self.dig_p1 = (data[5] as i16) | ((data[6] as i16) << 8);
-        self.dig_p2 = (data[7] as i16) | ((data[8] as i16) << 8);
-        self.dig_p3 = data[9] as i8;
-        self.dig_p4 = data[10] as i8;
-        self.dig_p5 = (data[11] as u16) | ((data[12] as u16) << 8);
-        self.dig_p6 = (data[13] as u16) | ((data[14] as u16) << 8);
-        self.dig_p7 = data[15] as i8;
-        self.dig_p8 = data[16] as i8;
-        self.dig_p9 = (data[17] as i16) | ((data[18] as i16) << 8);
-        self.dig_p10 = data[19] as i8;
-        self.dig_p11 = data[20] as i8;
-        Ok(())
-    }
 
     /// Reads and returns sensor values
     pub fn sensor_values(&mut self) -> Result<SensorData, I2C::Error> {
@@ -108,17 +109,18 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
     /// Compensates a pressure value
     fn compensate_pressure(&mut self, uncompensated: u32, compensated_temp: f64) -> f64 {
         let uncompensated = uncompensated as f64;
-        let p1 = ((self.dig_p1 as f64) - 16_384.0) / 1_048_576.0; //2^14 / 2^20
-        let p2 = ((self.dig_p2 as f64) - 16_384.0) / 536_870_912.0; //2^14 / 2^29
-        let p3 = (self.dig_p3 as f64) / 4_294_967_296.0; //2^32
-        let p4 = (self.dig_p4 as f64) / 137_438_953_472.0; //2^37
-        let p5 = (self.dig_p5 as f64) / 0.125; //2^-3
-        let p6 = (self.dig_p6 as f64) / 64.0; //2^6
-        let p7 = (self.dig_p7 as f64) / 256.0; //2^8
-        let p8 = (self.dig_p8 as f64) / 32_768.0; //2^15
-        let p9 = (self.dig_p9 as f64) / 281_474_976_710_656.0; //2^48
-        let p10 = (self.dig_p10 as f64) / 281_474_976_710_656.0; //2^48
-        let p11 = (self.dig_p11 as f64) / 36_893_488_147_419_103_232.0; //2^65
+        let c = self.calibration;
+        let p1 = ((c.dig_p1 as f64) - 16_384.0) / 1_048_576.0; //2^14 / 2^20
+        let p2 = ((c.dig_p2 as f64) - 16_384.0) / 536_870_912.0; //2^14 / 2^29
+        let p3 = (c.dig_p3 as f64) / 4_294_967_296.0; //2^32
+        let p4 = (c.dig_p4 as f64) / 137_438_953_472.0; //2^37
+        let p5 = (c.dig_p5 as f64) / 0.125; //2^-3
+        let p6 = (c.dig_p6 as f64) / 64.0; //2^6
+        let p7 = (c.dig_p7 as f64) / 256.0; //2^8
+        let p8 = (c.dig_p8 as f64) / 32_768.0; //2^15
+        let p9 = (c.dig_p9 as f64) / 281_474_976_710_656.0; //2^48
+        let p10 = (c.dig_p10 as f64) / 281_474_976_710_656.0; //2^48
+        let p11 = (c.dig_p11 as f64) / 36_893_488_147_419_103_232.0; //2^65
 
         let mut partial_data1 = p6 * compensated_temp;
         let mut partial_data2 = p7 * (compensated_temp * compensated_temp);
@@ -140,9 +142,10 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
 
     /// Compensates a temperature value
     fn compensate_temp(&mut self, uncompensated : u32) -> f64 {
-        let t1 = (self.dig_t1 as f64) / 0.00390625; //2^-8
-        let t2 = (self.dig_t2 as f64) / 1_073_741_824.0; //2^30
-        let t3 = (self.dig_t3 as f64) / 281_474_976_710_656.0; //2^48
+        let c = self.calibration;
+        let t1 = (c.dig_t1 as f64) / 0.00390625; //2^-8
+        let t2 = (c.dig_t2 as f64) / 1_073_741_824.0; //2^30
+        let t3 = (c.dig_t3 as f64) / 281_474_976_710_656.0; //2^48
 
         let partial_data1 = (uncompensated as f64) - t1;
         let partial_data2 = partial_data1 * t2;
