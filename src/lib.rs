@@ -231,8 +231,14 @@ impl<I2C: ehal::blocking::i2c::WriteRead> BMP388<I2C> {
 
     /// Sets filter
     pub fn set_filter(&mut self, new: Filter) -> Result<(), I2C::Error> {
+        // Read existing config content so as to not overwrite reserved areas in
+        // the register. TODO: not sure if this is necesarry, datasheet isn't
+        // clear about this.
+        let config = self.read_byte(Register::config)?;
         let filter = (new as u8) << 1;
-        self.write_byte(Register::config, filter)
+        let mask = 0b00001110;
+        let config = config & !mask | filter & mask;
+        self.write_byte(Register::config, config)
     }
 
     /// Sets oversampling configuration
